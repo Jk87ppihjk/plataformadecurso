@@ -1,6 +1,6 @@
 const db = require('./database');
-const abacateController = require('./pgmt'); // Controller antigo (AbacatePay)
-const mpController = require('./mp'); // Novo Controller (Mercado Pago)
+const abacateController = require('./pgmt'); // Importa o controller AbacatePay (original)
+const mpController = require('./mp'); // Importa o novo controller Mercado Pago
 
 // Matricular em um curso (Sem alterações)
 exports.enroll = async (req, res) => {
@@ -141,7 +141,7 @@ exports.getCourseModulesAndLessons = async (req, res) => {
 };
 
 // ------------------------------------
-// PROCESSAMENTO DE PAGAMENTO (MULTI-GATEWAY)
+// NOVO: PROCESSAMENTO DE PAGAMENTO (MULTI-GATEWAY)
 // ------------------------------------
 exports.processPaymentAndEnroll = async (req, res) => {
     try {
@@ -167,10 +167,6 @@ exports.processPaymentAndEnroll = async (req, res) => {
         // OPÇÃO A: MERCADO PAGO
         // ----------------------------------------
         if (gateway === 'mercadopago') {
-            // Prepara dados para o MP
-            // Se for Pix, paymentMethod deve ser 'pix'. Se for Cartão, deve ser o ID (master, visa, etc)
-            // O frontend deve enviar cardDetails.payment_method_id para cartão ou 'pix'
-            
             const mpMethodId = paymentMethod === 'pix' ? 'pix' : (cardDetails?.payment_method_id || 'credit_card');
             
             const mpData = {
@@ -179,7 +175,7 @@ exports.processPaymentAndEnroll = async (req, res) => {
                 payment_method_id: mpMethodId,
                 email: personalDetails.email,
                 identification: {
-                    type: 'CPF', // Ajuste se seu form aceita outros
+                    type: 'CPF', 
                     number: personalDetails.cpf ? personalDetails.cpf.replace(/[^0-9]/g, '') : ''
                 }
             };
@@ -221,17 +217,10 @@ exports.processPaymentAndEnroll = async (req, res) => {
         // ----------------------------------------
         // VERIFICAÇÃO E MATRÍCULA
         // ----------------------------------------
-        // Verifica se foi aprovado ou pendente (Pix/Boleto geralmente retorna pendente)
         if (paymentResult.status === 'APROVED' || paymentResult.status === 'PENDING') {
-            
-            // Só matricula se JÁ estiver aprovado (Cartão) ou se a lógica de negócio permitir "Pendente"
-            // Se quiser matricular apenas após confirmação do Pix, mova isso para um Webhook.
-            // AQUI, manteremos a lógica antiga: 'PENDING' também gera registro, mas talvez você queira travar o acesso.
             
             const [existing] = await db.query('SELECT id FROM enrollments WHERE user_id = ? AND course_id = ?', [userId, courseId]);
             if (existing.length === 0) {
-                // Se for Pix Pendente, talvez não queira liberar acesso imediato, mas cria o registro.
-                // O campo 'last_accessed' pode servir de flag ou crie um campo 'status' na tabela enrollments no futuro.
                 await db.query('INSERT INTO enrollments (user_id, course_id) VALUES (?, ?)', [userId, courseId]);
             }
         } else {
