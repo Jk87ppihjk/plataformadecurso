@@ -87,13 +87,13 @@ exports.getCourseModulesAndLessons = async (req, res) => {
         const now = new Date();
 
         // 1. Checa a matrícula
-        let priceValue = 1; // Assume pago por padrão
+        let priceValue = 1; 
         
         if (userRole === 'admin') {
             isEnrolled = true;
             enrolledDate = now;
         } else {
-            // NOVO: Checa se o curso é pago. Se for gratuito, considera matriculado
+            // Checa se o curso é pago. Se for gratuito, considera matriculado
             const [courseRows] = await db.query('SELECT price, discount_price FROM courses WHERE id = ?', [courseId]);
             priceValue = courseRows.length > 0 ? (parseFloat(courseRows[0].discount_price) > 0 ? parseFloat(courseRows[0].discount_price) : parseFloat(courseRows[0].price)) : 1;
             
@@ -110,11 +110,6 @@ exports.getCourseModulesAndLessons = async (req, res) => {
             }
         }
         
-        // Se o curso for pago e o usuário não estiver matriculado, permite apenas ver as aulas gratuitas
-        if (!isEnrolled && priceValue > 0) {
-            // Continua a execução, mas as aulas com is_free_preview=false terão o conteúdo bloqueado
-        }
-
         // 2. BUSCA OS MÓDULOS
         const [modules] = await db.query(
             'SELECT * FROM modules WHERE course_id = ? ORDER BY module_order', 
@@ -132,26 +127,28 @@ exports.getCourseModulesAndLessons = async (req, res) => {
             // 3. BUSCA AS AULAS (COM TRATAMENTO DE ERRO DE ROBUSTEZ)
             let lessons = [];
             try {
-                 // Tenta buscar as aulas. Se a coluna 'is_free_preview' não existir, vai dar ERRO AQUI.
+                // Tenta buscar as aulas. 
                 const [lessonsResult] = await db.query(
                     'SELECT id, title, duration, video_url, materials_link, lesson_order, is_free_preview FROM lessons WHERE module_id = ? ORDER BY lesson_order', 
                     [mod.id]
                 );
                 lessons = lessonsResult;
             } catch (dbError) {
-                // Se falhar (provavelmente por colunas faltando), loga o erro, garante que o array está vazio 
-                // e PULA para o próximo módulo. Isso evita o TypeError na linha 143.
-                console.error(`DB_ERROR: Falha ao buscar aulas. (Coluna 'is_free_preview' faltando?)`, dbError);
-                mod.lessons = []; // Garante que é um array vazio para o frontend
+                // Se falhar (problema de DB Schema, como já vimos), loga o erro e pula o módulo
+                console.error("DB_ERROR: Falha ao buscar aulas. (Coluna 'is_free_preview' faltando?)", dbError);
+                mod.lessons = []; 
                 mod.is_error = true; 
-                continue; // Pula para a próxima iteração do loop
+                continue; 
             }
             
-            mod.lessons = lessons.map(lesson => {
+            // CORREÇÃO CRÍTICA: Iterar com for...of para usar 'await' na checagem de progresso
+            let finalLessons = [];
+            for (const lesson of lessons) {
                 // Checa o progresso
                 let completed = false;
-                if (isEnrolled) { // Só checa progresso se estiver matriculado
-                    const [progress] = db.query('SELECT completed FROM progress WHERE user_id = ? AND lesson_id = ?', [userId, lesson.id]);
+                if (isEnrolled) { 
+                    // AGORA COM 'await' OBRIGATÓRIO: Garante que a query de progresso termine antes de seguir
+                    const [progress] = await db.query('SELECT completed FROM progress WHERE user_id = ? AND lesson_id = ?', [userId, lesson.id]);
                     completed = progress.length > 0 ? progress[0].completed : false;
                 }
                 lesson.completed = completed;
@@ -159,27 +156,26 @@ exports.getCourseModulesAndLessons = async (req, res) => {
                 // 4. Lógica de Acesso: Acesso se estiver matriculado E módulo liberado OU se a aula for um preview gratuito.
                 const canAccessContent = (isEnrolled && mod.is_released) || lesson.is_free_preview;
 
-                // Se não puder acessar o conteúdo, remove a URL do vídeo/material.
+                // Restringe o acesso ao conteúdo se não puder acessar
                 if (!canAccessContent) {
                     lesson.video_url = null;
                     lesson.materials_link = null;
-                    lesson.can_access = false; // Flag para o frontend
+                    lesson.can_access = false; 
                 } else {
                     lesson.can_access = true;
                 }
-
-                return lesson;
-            });
-
-            // Se o usuário NÃO ESTIVER MATRICULADO e o curso for pago, filtra para mostrar APENAS as aulas gratuitas
+                
+                finalLessons.push(lesson);
+            }
+            mod.lessons = finalLessons;
+            
+            // Aplica filtros e content drip
             if (!isEnrolled && priceValue > 0) {
                  mod.lessons = mod.lessons.filter(l => l.is_free_preview === true);
-                 // Se o módulo não tiver nenhuma aula gratuita, limpa
                  if (mod.lessons.length === 0) {
                      mod.lessons = [];
                  }
             } else if (!mod.is_released && isEnrolled) {
-                 // Se estiver matriculado mas o módulo tem content drip, remove o conteúdo do vídeo das aulas não gratuitas
                  mod.lessons = mod.lessons.map(l => {
                     if (!l.is_free_preview) {
                         l.video_url = null;
@@ -196,14 +192,13 @@ exports.getCourseModulesAndLessons = async (req, res) => {
 
     } catch (error) {
         // Se o erro for um erro de DB mais genérico (ex: Tabela faltando), ele cairá aqui
+        // O erro deve sumir, já que você confirmou o Schema. 
         console.error("Erro FATAL ao buscar módulos/aulas. DB Schema Corrompido?", error);
         res.status(500).json({ message: 'Erro ao buscar conteúdo do curso' });
     }
 };
 
-// ------------------------------------
-// NOVO: PROCESSAMENTO DE PAGAMENTO (MULTI-GATEWAY)
-// ------------------------------------
+// ... (exports.processPaymentAndEnroll continua inalterado) ...
 exports.processPaymentAndEnroll = async (req, res) => {
     try {
         const userId = req.user.id;
