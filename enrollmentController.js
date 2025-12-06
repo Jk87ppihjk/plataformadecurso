@@ -1,5 +1,5 @@
 const db = require('./database');
-const paymentController = require('./pgmt');
+const paymentController = require('./pgmt'); // Importa o novo controller de pagamento
 
 // Matricular em um curso (Sem alterações)
 exports.enroll = async (req, res) => {
@@ -12,67 +12,6 @@ exports.enroll = async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Erro ao matricular' });
-    }
-};
-
-// ------------------------------------
-// NOVO: PROCESSAMENTO DE PAGAMENTO REAL (ABACATEPAY)
-// ------------------------------------
-exports.processPaymentAndEnroll = async (req, res) => {
-    try {
-        const userId = req.user.id;
-        const { courseId, paymentMethod, cardDetails, personalDetails } = req.body;
-
-        if (!courseId || !paymentMethod || !personalDetails || !personalDetails.email || !personalDetails.cpf) {
-             return res.status(400).json({ message: 'Dados de compra incompletos.' });
-        }
-        
-        // 1. Obter o preço do curso (para enviar ao gateway)
-        const [courseRows] = await db.query('SELECT price, discount_price FROM courses WHERE id = ?', [courseId]);
-        if (courseRows.length === 0) {
-            return res.status(404).json({ message: 'Curso não encontrado.' });
-        }
-        const course = courseRows[0];
-        // Calcula o preço final (se houver desconto)
-        const finalPrice = parseFloat(course.discount_price) > 0 ? parseFloat(course.discount_price) : parseFloat(course.price);
-
-        let paymentResult;
-        
-        // 2. Chamar o Gateway de Pagamento (AbacatePay Mock)
-        if (paymentMethod === 'credit') {
-            if (!cardDetails) return res.status(400).json({ message: 'Dados do cartão incompletos.' });
-            paymentResult = await paymentController.processCreditCardPayment(cardDetails, finalPrice, personalDetails);
-
-        } else if (paymentMethod === 'pix') {
-            paymentResult = await paymentController.generatePixPayment(finalPrice, personalDetails);
-            
-        } else {
-            return res.status(400).json({ message: 'Método de pagamento inválido.' });
-        }
-        
-        // 3. Verifica o Status da Transação
-        if (paymentResult.status === 'APROVED' || paymentResult.status === 'PENDING') {
-             // 4. Realiza a Matrícula (Enrollment) - Acesso liberado no sistema.
-            const [existing] = await db.query('SELECT id FROM enrollments WHERE user_id = ? AND course_id = ?', [userId, courseId]);
-            if (existing.length === 0) {
-                await db.query('INSERT INTO enrollments (user_id, course_id) VALUES (?, ?)', [userId, courseId]);
-            }
-        } else {
-             // Pagamento DECLINED
-             return res.status(400).json({ message: `Pagamento ${paymentResult.status}: ${paymentResult.message || 'Erro no processamento.'}` });
-        }
-        
-        // 5. Retorna o resultado da transação
-        res.json({
-            message: `Compra finalizada. Acesso ao curso ${paymentResult.status === 'APROVED' ? 'liberado' : 'pendente'}.`,
-            paymentStatus: paymentResult.status,
-            courseId: courseId,
-            details: paymentResult
-        });
-
-    } catch (error) {
-        console.error('Erro no processamento de pagamento e matrícula:', error);
-        res.status(500).json({ message: 'Erro interno ao finalizar a compra' });
     }
 };
 
@@ -139,7 +78,7 @@ exports.completeLesson = async (req, res) => {
 exports.getCourseModulesAndLessons = async (req, res) => {
     try {
         const userId = req.user.id;
-        // NOVO: Captura a role do token JWT
+        // Captura a role do token JWT
         const userRole = req.user.role; 
         const { courseId } = req.params;
 
@@ -147,13 +86,11 @@ exports.getCourseModulesAndLessons = async (req, res) => {
         let isEnrolled = false;
         const now = new Date();
 
-        // 1. Lógica de Matrícula e Permissão (CORREÇÃO APLICADA AQUI)
+        // 1. Lógica de Matrícula e Permissão
         if (userRole === 'admin') {
-            // Se for admin, pulamos o check de matrícula e assumimos que está "matriculado" agora
             isEnrolled = true;
             enrolledDate = now;
         } else {
-            // Se for aluno (student), verifica a matrícula
             const [enrollmentRows] = await db.query('SELECT enrolled_at FROM enrollments WHERE user_id = ? AND course_id = ?', [userId, courseId]);
             
             if (enrollmentRows.length > 0) {
@@ -180,7 +117,7 @@ exports.getCourseModulesAndLessons = async (req, res) => {
             const releaseDate = new Date(enrolledDate);
             releaseDate.setDate(releaseDate.getDate() + daysToWait);
 
-            // Admin vê todos os módulos (isReleased = true). Aluno segue o Content Drip.
+            // Admin vê todos os módulos. Aluno segue o Content Drip.
             const isReleased = userRole === 'admin' ? true : (now >= releaseDate);
             
             mod.is_released = isReleased;
@@ -211,5 +148,75 @@ exports.getCourseModulesAndLessons = async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Erro ao buscar conteúdo do curso' });
+    }
+};
+
+// ------------------------------------
+// NOVO: PROCESSAMENTO DE PAGAMENTO (ABACATEPAY)
+// ------------------------------------
+exports.processPaymentAndEnroll = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        // Os dados pessoais (name, email, cpf) vêm do formulário
+        const { courseId, paymentMethod, cardDetails, personalDetails } = req.body;
+
+        if (!courseId || !paymentMethod || !personalDetails || !personalDetails.email || !personalDetails.cpf || !personalDetails.fullName) {
+             return res.status(400).json({ message: 'Dados de compra incompletos. Verifique ID do curso, método e dados pessoais.' });
+        }
+        
+        // 1. Obter detalhes do curso para preço
+        const [courseRows] = await db.query('SELECT title, price, discount_price FROM courses WHERE id = ?', [courseId]);
+        if (courseRows.length === 0) {
+            return res.status(404).json({ message: 'Curso não encontrado.' });
+        }
+        const course = courseRows[0];
+        
+        const priceValue = parseFloat(course.discount_price) > 0 ? parseFloat(course.discount_price) : parseFloat(course.price);
+        const priceInCents = Math.round(priceValue * 100); // Preço em centavos para a API
+
+        // 2. Estruturar dados do cliente para a AbacatePay
+        const customerData = {
+            name: personalDetails.fullName,
+            cellphone: personalDetails.cellphone || '(11) 99999-9999', 
+            email: personalDetails.email,
+            taxId: personalDetails.cpf.replace(/[^0-9]/g, ''), // Remove formatação do CPF
+        };
+        
+        // 3. Define o método de pagamento para a API da AbacatePay
+        const abacatePayMethod = paymentMethod === 'credit' ? 'CREDIT_CARD' : 'PIX';
+
+        // 4. Cria a Cobrança no AbacatePay (MOCK)
+        const paymentResult = await paymentController.createBilling(
+            `COURSE-${courseId}`, // externalId do produto
+            course.title,
+            priceInCents,
+            abacatePayMethod,
+            customerData,
+            cardDetails 
+        );
+        
+        // 5. Verifica o Status da Transação
+        if (paymentResult.status === 'APROVED' || paymentResult.status === 'PENDING') {
+            // Se aprovado (Cartão) ou Pendente (PIX), matricula o usuário
+            const [existing] = await db.query('SELECT id FROM enrollments WHERE user_id = ? AND course_id = ?', [userId, courseId]);
+            if (existing.length === 0) {
+                await db.query('INSERT INTO enrollments (user_id, course_id) VALUES (?, ?)', [userId, courseId]);
+            }
+        } else {
+             // Pagamento DECLINED ou ERROR
+             return res.status(400).json({ message: `Pagamento ${paymentResult.status}: ${paymentResult.message || 'Erro no processamento.'}` });
+        }
+        
+        // 6. Retorna o resultado para o Frontend
+        res.json({
+            message: `Compra finalizada. Acesso ao curso ${paymentResult.status === 'APROVED' ? 'liberado' : 'pendente'}.`,
+            paymentStatus: paymentResult.status,
+            courseId: courseId,
+            details: paymentResult
+        });
+
+    } catch (error) {
+        console.error('Erro no processamento de pagamento e matrícula:', error);
+        res.status(500).json({ message: 'Erro interno ao finalizar a compra' });
     }
 };
