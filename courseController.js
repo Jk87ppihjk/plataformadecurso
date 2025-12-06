@@ -1,27 +1,58 @@
 const db = require('./database');
 
-// Lista todos os cursos com filtros opcionais (categoria, busca)
+// Lista todos os cursos com filtros E AVALIAÇÃO REAL
 exports.getAllCourses = async (req, res) => {
     try {
         const { category, search } = req.query;
-        // NOVO: Seleciona 'tags' para a listagem (opcional, mas bom ter)
-        let query = 'SELECT id, title, description, instructor_name, price, discount_price, category, tags, cover_image_url, created_at FROM courses WHERE 1=1';
+
+        // Query avançada: Busca dados do curso + Média de Reviews (LEFT JOIN)
+        let query = `
+            SELECT 
+                c.id, c.title, c.description, c.instructor_name, 
+                c.price, c.discount_price, c.category, c.tags, 
+                c.cover_image_url, c.created_at,
+                COALESCE(AVG(r.rating), 0) as average_rating,
+                COUNT(r.id) as total_reviews
+            FROM courses c
+            LEFT JOIN course_reviews r ON c.id = r.course_id
+            WHERE 1=1
+        `;
+        
         let params = [];
 
         if (category && category !== 'Todos') {
-            query += ' AND category = ?';
+            query += ' AND c.category = ?';
             params.push(category);
         }
 
         if (search) {
-            query += ' AND title LIKE ? OR tags LIKE ?';
-            params.push(`%${search}%`, `%${search}%`); // Permite buscar por título ou tag
+            query += ' AND (c.title LIKE ? OR c.tags LIKE ?)';
+            params.push(`%${search}%`, `%${search}%`);
         }
 
+        // Agrupa por curso para o cálculo da média funcionar
+        query += ' GROUP BY c.id';
+        
+        // Ordena pelos mais recentes
+        query += ' ORDER BY c.created_at DESC';
+
         const [courses] = await db.query(query, params);
-        res.json(courses);
+
+        // Formata a média para 1 casa decimal (ex: 4.5)
+        const formattedCourses = courses.map(course => ({
+            ...course,
+            average_rating: parseFloat(course.average_rating).toFixed(1)
+        }));
+
+        res.json(formattedCourses);
     } catch (error) {
         console.error(error);
+        // Fallback: Se a tabela reviews não existir, retorna sem erro fatal
+        if (error.code === 'ER_NO_SUCH_TABLE') {
+             console.warn("Aviso: Tabela course_reviews não encontrada. Retornando cursos sem rating.");
+             const [basicCourses] = await db.query('SELECT * FROM courses');
+             return res.json(basicCourses);
+        }
         res.status(500).json({ message: 'Erro ao buscar cursos' });
     }
 };
@@ -31,20 +62,17 @@ exports.getCourseDetails = async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Dados básicos do curso (agora inclui 'tags')
+        // Dados básicos do curso
         const [courses] = await db.query('SELECT * FROM courses WHERE id = ?', [id]);
         if (courses.length === 0) return res.status(404).json({ message: 'Curso não encontrado' });
         const course = courses[0];
 
-        // NOVO: Cálculo da Avaliação Média e Contagem de Reviews
-        // NOTA: Esta query requer que a tabela 'course_reviews' exista. Se não existir, causará ERRO 500.
+        // Avaliação Média e Contagem
         try {
             const [reviewStats] = await db.query('SELECT AVG(rating) as average_rating, COUNT(id) as total_reviews FROM course_reviews WHERE course_id = ?', [id]);
             course.average_rating = reviewStats[0].average_rating ? parseFloat(reviewStats[0].average_rating).toFixed(1) : '0.0';
             course.total_reviews = reviewStats[0].total_reviews;
         } catch (reviewError) {
-             // Se a tabela course_reviews não existir, define como 0 e continua
-             console.warn("DB_WARN: Tabela 'course_reviews' pode estar faltando. Definindo avaliações como zero.", reviewError);
              course.average_rating = '0.0';
              course.total_reviews = 0;
         }
@@ -52,9 +80,7 @@ exports.getCourseDetails = async (req, res) => {
         // Módulos e Aulas
         const [modules] = await db.query('SELECT * FROM modules WHERE course_id = ? ORDER BY module_order', [id]);
         
-        // Para cada módulo, buscar as aulas
         for (let mod of modules) {
-            // NOVO: Retorna o campo 'is_free_preview' que é usado no frontend (detalhes.html)
             const [lessons] = await db.query('SELECT id, title, duration, video_url, lesson_order, is_free_preview FROM lessons WHERE module_id = ? ORDER BY lesson_order', [mod.id]);
             mod.lessons = lessons;
         }
