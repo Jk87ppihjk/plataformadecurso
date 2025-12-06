@@ -129,12 +129,23 @@ exports.getCourseModulesAndLessons = async (req, res) => {
             const isReleased = userRole === 'admin' ? true : (now >= releaseDate);
             mod.is_released = isReleased;
             
-            // 3. BUSCA AS AULAS
-            // Inclui 'is_free_preview' no SELECT
-            const [lessons] = await db.query(
-                'SELECT id, title, duration, video_url, materials_link, lesson_order, is_free_preview FROM lessons WHERE module_id = ? ORDER BY lesson_order', 
-                [mod.id]
-            );
+            // 3. BUSCA AS AULAS (COM TRATAMENTO DE ERRO DE ROBUSTEZ)
+            let lessons = [];
+            try {
+                 // Tenta buscar as aulas. Se a coluna 'is_free_preview' não existir, vai dar ERRO AQUI.
+                const [lessonsResult] = await db.query(
+                    'SELECT id, title, duration, video_url, materials_link, lesson_order, is_free_preview FROM lessons WHERE module_id = ? ORDER BY lesson_order', 
+                    [mod.id]
+                );
+                lessons = lessonsResult;
+            } catch (dbError) {
+                // Se falhar (provavelmente por colunas faltando), loga o erro, garante que o array está vazio 
+                // e PULA para o próximo módulo. Isso evita o TypeError na linha 143.
+                console.error(`DB_ERROR: Falha ao buscar aulas. (Coluna 'is_free_preview' faltando?)`, dbError);
+                mod.lessons = []; // Garante que é um array vazio para o frontend
+                mod.is_error = true; 
+                continue; // Pula para a próxima iteração do loop
+            }
             
             mod.lessons = lessons.map(lesson => {
                 // Checa o progresso
@@ -184,7 +195,8 @@ exports.getCourseModulesAndLessons = async (req, res) => {
         res.json(modules);
 
     } catch (error) {
-        console.error(error);
+        // Se o erro for um erro de DB mais genérico (ex: Tabela faltando), ele cairá aqui
+        console.error("Erro FATAL ao buscar módulos/aulas. DB Schema Corrompido?", error);
         res.status(500).json({ message: 'Erro ao buscar conteúdo do curso' });
     }
 };
