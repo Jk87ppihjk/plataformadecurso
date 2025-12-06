@@ -13,10 +13,10 @@ const courseController = require('./courseController');
 const enrollmentController = require('./enrollmentController');
 const adminController = require('./adminController');
 
-// Middleware de Autenticação Geral (Sem alterações)
+// Middleware de Autenticação Geral
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
     if (!token) return res.sendStatus(401);
 
@@ -27,7 +27,7 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
-// Middleware Exclusivo para Admin (Sem alterações)
+// Middleware Exclusivo para Admin
 const requireAdmin = (req, res, next) => {
     if (req.user && req.user.role === 'admin') {
         next();
@@ -36,25 +36,38 @@ const requireAdmin = (req, res, next) => {
     }
 };
 
-// Rotas Públicas (Sem alterações)
+// ------------------------------------
+// ROTAS PÚBLICAS
+// ------------------------------------
 router.post('/register', authController.register);
 router.post('/login', authController.login);
 router.get('/courses', courseController.getAllCourses);
 router.get('/courses/:id', courseController.getCourseDetails);
 
-// Rotas de Aluno (Autenticadas)
+
+// ------------------------------------
+// ROTAS DE ALUNO (Autenticadas)
+// ------------------------------------
 router.post('/enroll', authenticateToken, enrollmentController.enroll);
 router.get('/my-courses', authenticateToken, enrollmentController.getMyCourses);
 
-// ROTA PARA VISUALIZAÇÃO DE AULAS COM CHECAGEM DE DRIP
+// ROTA para visualização de aulas com checagem de Content Drip (matrícula e tempo)
 router.get('/my-courses/:courseId/content', authenticateToken, enrollmentController.getCourseModulesAndLessons); 
 
 router.post('/lessons/complete', authenticateToken, enrollmentController.completeLesson);
 
-// Rotas de Admin (Requer Login + Role Admin) (Sem alterações nos paths)
-// Nota: O adminController.js foi atualizado para lidar com os novos campos.
+
+// ------------------------------------
+// ROTAS DE ADMIN (Requer Login + Role Admin)
+// ------------------------------------
+
+// Criação de Conteúdo
 router.post('/admin/courses', authenticateToken, requireAdmin, upload.single('file'), adminController.createCourse);
 router.post('/admin/modules', authenticateToken, requireAdmin, adminController.createModule);
 router.post('/admin/lessons', authenticateToken, requireAdmin, upload.single('file'), adminController.createLesson);
+
+// Reordenação de Conteúdo (NOVAS ROTAS)
+router.post('/admin/modules/reorder', authenticateToken, requireAdmin, adminController.reorderModules);
+router.post('/admin/lessons/reorder', authenticateToken, requireAdmin, adminController.reorderLessons);
 
 module.exports = router;
