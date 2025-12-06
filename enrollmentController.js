@@ -171,8 +171,13 @@ exports.processPaymentAndEnroll = async (req, res) => {
         }
         const course = courseRows[0];
         
+        // Cálculo do preço final: Prioriza discount_price se for maior que 0
         const priceValue = parseFloat(course.discount_price) > 0 ? parseFloat(course.discount_price) : parseFloat(course.price);
         const priceInCents = Math.round(priceValue * 100); // Preço em centavos para a API
+
+        // NOVO LOG PARA VERIFICAR OS DADOS DO BANCO ANTES DE ENVIAR
+        console.log(`[VERIFICAR DADOS DO DB] courseId: ${courseId}, price: ${course.price}, discount_price: ${course.discount_price}, FINAL PRICE USADO: ${priceValue}`);
+
 
         // 2. Estruturar dados do cliente para a AbacatePay
         const customerData = {
@@ -194,7 +199,7 @@ exports.processPaymentAndEnroll = async (req, res) => {
             customerData,
             cardDetails 
         );
-        
+
         // 5. Verifica o Status da Transação
         if (paymentResult.status === 'APROVED' || paymentResult.status === 'PENDING') {
             // Se aprovado (Cartão) ou Pendente (PIX), matricula o usuário
