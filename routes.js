@@ -56,6 +56,9 @@ router.get('/my-courses/:courseId/content', authenticateToken, enrollmentControl
 
 router.post('/lessons/complete', authenticateToken, enrollmentController.completeLesson);
 
+// NOVO: ROTA para processar o checkout e pagamento simulado
+router.post('/checkout/finish', authenticateToken, enrollmentController.processPaymentAndEnroll); 
+
 
 // ------------------------------------
 // ROTAS DE ADMIN (Requer Login + Role Admin)
