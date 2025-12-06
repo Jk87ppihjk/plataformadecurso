@@ -41,6 +41,8 @@ exports.createCustomer = async (customerData) => {
  */
 exports.createBilling = async (courseExternalId, courseTitle, priceInCents, paymentMethod, customerData, cardDetails = null) => {
     
+    const priceValue = (priceInCents / 100).toFixed(2);
+    
     // Simulação do payload, seguindo a estrutura da AbacatePay
     const data = {
         frequency: 'ONE_TIME',
@@ -59,22 +61,26 @@ exports.createBilling = async (courseExternalId, courseTitle, priceInCents, paym
         customer: customerData,
     };
 
-    console.log(`[ABACATEPAY MOCK] Tentando criar cobrança via ${paymentMethod} no valor de R$${(priceInCents / 100).toFixed(2)}`);
+    console.log(`[ABACATEPAY MOCK] Tentando criar cobrança via ${paymentMethod} no valor de R$${priceValue}`);
 
     if (paymentMethod === 'PIX') {
-        // Simulação PIX: Retorna PENDING com código para o frontend
+        const pixCode = `PIX-ABACATEPAY-${Date.now()}`;
+        
+        // CORREÇÃO: Usando a API pública 'api.qrserver.com' para gerar a imagem do QR Code
+        const qrCodeData = `Valor: ${priceValue}|CPF: ${customerData.taxId}|Code: ${pixCode}`;
+        const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrCodeData)}`;
+        
         return {
             status: 'PENDING',
             transactionId: `ABCT-PIX-${Date.now()}`,
-            pixCode: `PIX-ABACATEPAY-${Date.now()}`,
-            qrCodeUrl: `https://via.placeholder.com/200?text=QR+Code+R$${(priceInCents / 100).toFixed(2)}`,
+            pixCode: pixCode,
+            qrCodeUrl: qrCodeUrl, // URL que o frontend vai usar para renderizar
             expirationTime: 1800, // 30 minutos
             message: 'Cobrança PIX gerada. Aguardando pagamento.',
         };
     } 
     
     if (paymentMethod === 'CREDIT_CARD') {
-        // Simulação Cartão: Mockando recusa para CVV 000
         if (cardDetails && cardDetails.cvv === '000') {
             return { status: 'DECLINED', message: 'Pagamento recusado pela operadora (CVV 000).', transactionId: null };
         }
