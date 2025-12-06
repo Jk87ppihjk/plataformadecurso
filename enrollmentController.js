@@ -75,7 +75,7 @@ exports.completeLesson = async (req, res) => {
     }
 };
 
-// Busca o conteúdo do curso (Sem alterações)
+// Busca o conteúdo do curso 
 exports.getCourseModulesAndLessons = async (req, res) => {
     try {
         const userId = req.user.id;
@@ -86,22 +86,36 @@ exports.getCourseModulesAndLessons = async (req, res) => {
         let isEnrolled = false;
         const now = new Date();
 
+        // 1. Checa a matrícula
+        let priceValue = 1; // Assume pago por padrão
+        
         if (userRole === 'admin') {
             isEnrolled = true;
             enrolledDate = now;
         } else {
-            const [enrollmentRows] = await db.query('SELECT enrolled_at FROM enrollments WHERE user_id = ? AND course_id = ?', [userId, courseId]);
+            // NOVO: Checa se o curso é pago. Se for gratuito, considera matriculado
+            const [courseRows] = await db.query('SELECT price, discount_price FROM courses WHERE id = ?', [courseId]);
+            priceValue = courseRows.length > 0 ? (parseFloat(courseRows[0].discount_price) > 0 ? parseFloat(courseRows[0].discount_price) : parseFloat(courseRows[0].price)) : 1;
             
-            if (enrollmentRows.length > 0) {
-                isEnrolled = true;
-                enrolledDate = new Date(enrollmentRows[0].enrolled_at);
+            if (priceValue <= 0) {
+                 isEnrolled = true;
+                 enrolledDate = now; 
+            } else {
+                const [enrollmentRows] = await db.query('SELECT enrolled_at FROM enrollments WHERE user_id = ? AND course_id = ?', [userId, courseId]);
+                
+                if (enrollmentRows.length > 0) {
+                    isEnrolled = true;
+                    enrolledDate = new Date(enrollmentRows[0].enrolled_at);
+                }
             }
         }
-
-        if (!isEnrolled) {
-            return res.status(403).json({ message: 'Acesso negado. Usuário não matriculado neste curso.' });
-        }
         
+        // Se o curso for pago e o usuário não estiver matriculado, permite apenas ver as aulas gratuitas
+        if (!isEnrolled && priceValue > 0) {
+            // Continua a execução, mas as aulas com is_free_preview=false terão o conteúdo bloqueado
+        }
+
+        // 2. BUSCA OS MÓDULOS
         const [modules] = await db.query(
             'SELECT * FROM modules WHERE course_id = ? ORDER BY module_order', 
             [courseId]
@@ -115,23 +129,58 @@ exports.getCourseModulesAndLessons = async (req, res) => {
             const isReleased = userRole === 'admin' ? true : (now >= releaseDate);
             mod.is_released = isReleased;
             
-            if (mod.is_released) {
-                const [lessons] = await db.query(
-                    'SELECT id, title, duration, video_url, materials_link, lesson_order FROM lessons WHERE module_id = ? ORDER BY lesson_order', 
-                    [mod.id]
-                );
-                
-                for (let lesson of lessons) {
-                    const [progress] = await db.query('SELECT completed FROM progress WHERE user_id = ? AND lesson_id = ?', [userId, lesson.id]);
-                    lesson.completed = progress.length > 0 ? progress[0].completed : false;
+            // 3. BUSCA AS AULAS
+            // Inclui 'is_free_preview' no SELECT
+            const [lessons] = await db.query(
+                'SELECT id, title, duration, video_url, materials_link, lesson_order, is_free_preview FROM lessons WHERE module_id = ? ORDER BY lesson_order', 
+                [mod.id]
+            );
+            
+            mod.lessons = lessons.map(lesson => {
+                // Checa o progresso
+                let completed = false;
+                if (isEnrolled) { // Só checa progresso se estiver matriculado
+                    const [progress] = db.query('SELECT completed FROM progress WHERE user_id = ? AND lesson_id = ?', [userId, lesson.id]);
+                    completed = progress.length > 0 ? progress[0].completed : false;
                 }
-                mod.lessons = lessons;
-            } else {
-                mod.lessons = [];
-                mod.release_date = releaseDate.toISOString().split('T')[0]; 
+                lesson.completed = completed;
+
+                // 4. Lógica de Acesso: Acesso se estiver matriculado E módulo liberado OU se a aula for um preview gratuito.
+                const canAccessContent = (isEnrolled && mod.is_released) || lesson.is_free_preview;
+
+                // Se não puder acessar o conteúdo, remove a URL do vídeo/material.
+                if (!canAccessContent) {
+                    lesson.video_url = null;
+                    lesson.materials_link = null;
+                    lesson.can_access = false; // Flag para o frontend
+                } else {
+                    lesson.can_access = true;
+                }
+
+                return lesson;
+            });
+
+            // Se o usuário NÃO ESTIVER MATRICULADO e o curso for pago, filtra para mostrar APENAS as aulas gratuitas
+            if (!isEnrolled && priceValue > 0) {
+                 mod.lessons = mod.lessons.filter(l => l.is_free_preview === true);
+                 // Se o módulo não tiver nenhuma aula gratuita, limpa
+                 if (mod.lessons.length === 0) {
+                     mod.lessons = [];
+                 }
+            } else if (!mod.is_released && isEnrolled) {
+                 // Se estiver matriculado mas o módulo tem content drip, remove o conteúdo do vídeo das aulas não gratuitas
+                 mod.lessons = mod.lessons.map(l => {
+                    if (!l.is_free_preview) {
+                        l.video_url = null;
+                        l.materials_link = null;
+                        l.can_access = false;
+                    }
+                    return l;
+                 });
+                 mod.release_date = releaseDate.toISOString().split('T')[0];
             }
         }
-
+        
         res.json(modules);
 
     } catch (error) {
@@ -146,7 +195,6 @@ exports.getCourseModulesAndLessons = async (req, res) => {
 exports.processPaymentAndEnroll = async (req, res) => {
     try {
         const userId = req.user.id;
-        // Agora aceita 'gateway' no body. Default é 'abacate'
         const { courseId, paymentMethod, cardDetails, personalDetails, gateway = 'abacate' } = req.body;
 
         if (!courseId || !personalDetails || !personalDetails.email || !personalDetails.fullName) {
@@ -161,6 +209,25 @@ exports.processPaymentAndEnroll = async (req, res) => {
         const course = courseRows[0];
         const priceValue = parseFloat(course.discount_price) > 0 ? parseFloat(course.discount_price) : parseFloat(course.price);
 
+        // NOVO: 1.1. Verifica se o curso é gratuito (priceValue == 0)
+        if (priceValue <= 0) {
+            const [existing] = await db.query('SELECT id FROM enrollments WHERE user_id = ? AND course_id = ?', [userId, courseId]);
+            if (existing.length === 0) {
+                await db.query('INSERT INTO enrollments (user_id, course_id) VALUES (?, ?)', [userId, courseId]);
+                console.log(`✅ MATRÍCULA GRATUITA REALIZADA | User ID: ${userId} | Curso: ${course.title} (ID: ${courseId})`);
+            } else {
+                console.log(`⚠️ MATRÍCULA GRATUITA DUPLICADA | User ID: ${userId} | Curso: ${course.title} (ID: ${courseId})`);
+            }
+            
+            return res.json({
+                message: `Matrícula gratuita concluída.`,
+                paymentStatus: 'APROVED', 
+                courseId: courseId,
+                details: { status: 'FREE_COURSE' },
+            });
+        }
+        // Fim da verificação gratuita
+        
         let paymentResult;
 
         // ----------------------------------------
