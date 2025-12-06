@@ -1,7 +1,7 @@
 const db = require('./database');
 const cloudinary = require('./cloudinaryConfig');
 
-// Função auxiliar para upload de buffer para o Cloudinary
+// Função auxiliar para upload de buffer para o Cloudinary (Sem alterações)
 const uploadToCloudinary = (buffer, folder, resourceType = 'image') => {
     return new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
@@ -15,11 +15,11 @@ const uploadToCloudinary = (buffer, folder, resourceType = 'image') => {
     });
 };
 
-// 1. Criar Curso
+// 1. Criar Curso (Sem alterações)
 exports.createCourse = async (req, res) => {
     try {
         const { title, description, price, discount_price, category, instructor_name } = req.body;
-        const file = req.file; // A imagem de capa vem aqui
+        const file = req.file;
 
         let cover_image_url = '';
 
@@ -40,14 +40,15 @@ exports.createCourse = async (req, res) => {
     }
 };
 
-// 2. Criar Módulo
+// 2. Criar Módulo (COM NOVO CAMPO DE DRIP)
 exports.createModule = async (req, res) => {
     try {
-        const { courseId, title, module_order } = req.body;
+        // Recebe o novo campo: release_days_after_enrollment
+        const { courseId, title, module_order, release_days_after_enrollment } = req.body;
 
         const [result] = await db.query(
-            'INSERT INTO modules (course_id, title, module_order) VALUES (?, ?, ?)',
-            [courseId, title, module_order]
+            'INSERT INTO modules (course_id, title, module_order, release_days_after_enrollment) VALUES (?, ?, ?, ?)',
+            [courseId, title, module_order, release_days_after_enrollment || 0] // Default 0 (liberado imediatamente)
         );
 
         res.status(201).json({ message: 'Módulo criado com sucesso!', moduleId: result.insertId });
@@ -57,23 +58,24 @@ exports.createModule = async (req, res) => {
     }
 };
 
-// 3. Criar Aula (Com Upload de Vídeo)
+// 3. Criar Aula (COM CAMPO DE LINKS DE MATERIAL)
 exports.createLesson = async (req, res) => {
     try {
-        const { moduleId, title, duration, lesson_order } = req.body;
-        const file = req.file; // O vídeo vem aqui
+        // Recebe o novo campo: materials_link
+        const { moduleId, title, duration, lesson_order, materials_link } = req.body;
+        const file = req.file; // O vídeo vem aqui (opcional)
 
         let video_url = '';
 
         if (file) {
-            // resource_type: 'video' é crucial para videos
+            // resource_type: 'video' é crucial para videos no Cloudinary
             const uploadResult = await uploadToCloudinary(file.buffer, 'courses_videos', 'video');
             video_url = uploadResult.secure_url;
         }
 
         await db.query(
-            'INSERT INTO lessons (module_id, title, duration, video_url, lesson_order) VALUES (?, ?, ?, ?, ?)',
-            [moduleId, title, duration, video_url, lesson_order]
+            'INSERT INTO lessons (module_id, title, duration, video_url, lesson_order, materials_link) VALUES (?, ?, ?, ?, ?, ?)',
+            [moduleId, title, duration, video_url, lesson_order, materials_link || null] // materials_link é opcional
         );
 
         res.status(201).json({ message: 'Aula criada com sucesso!' });
