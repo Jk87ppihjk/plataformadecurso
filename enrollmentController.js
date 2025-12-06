@@ -222,8 +222,17 @@ exports.processPaymentAndEnroll = async (req, res) => {
             const [existing] = await db.query('SELECT id FROM enrollments WHERE user_id = ? AND course_id = ?', [userId, courseId]);
             if (existing.length === 0) {
                 await db.query('INSERT INTO enrollments (user_id, course_id) VALUES (?, ?)', [userId, courseId]);
+                
+                // NOVO LOG DE SUCESSO E MATRÍCULA REALIZADA
+                console.log(`✅ MATRÍCULA REALIZADA | Status: ${paymentResult.status} | User ID: ${userId} | Curso: ${course.title} (ID: ${courseId}) | Gateway: ${gateway}`);
+            } else {
+                 // NOVO LOG DE MATRÍCULA DUPLICADA
+                console.log(`⚠️ MATRÍCULA DUPLICADA | Status: ${paymentResult.status} | User ID: ${userId} | Curso: ${course.title} (ID: ${courseId}) | Usuário já matriculado.`);
             }
         } else {
+             // NOVO LOG DE PAGAMENTO RECUSADO
+             console.log(`❌ PAGAMENTO RECUSADO | Status: ${paymentResult.status} | User ID: ${userId} | Curso: ${course.title} (ID: ${courseId}) | Mensagem: ${paymentResult.message || 'Erro desconhecido.'}`);
+
              return res.status(400).json({ message: `Pagamento não concluído. Status: ${paymentResult.status} - ${paymentResult.message || ''}` });
         }
         
