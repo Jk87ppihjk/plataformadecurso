@@ -22,7 +22,7 @@ const uploadToCloudinary = (buffer, folder, resourceType = 'image') => {
 // 1. Criar Curso
 exports.createCourse = async (req, res) => {
     try {
-        const { title, description, price, discount_price, category, instructor_name } = req.body;
+        const { title, description, price, discount_price, category, instructor_name, tags } = req.body;
         const file = req.file;
 
         let cover_image_url = '';
@@ -32,9 +32,10 @@ exports.createCourse = async (req, res) => {
             cover_image_url = uploadResult.secure_url;
         }
 
+        // NOVO: Adicionando 'tags'
         const [result] = await db.query(
-            'INSERT INTO courses (title, description, price, discount_price, category, instructor_name, cover_image_url) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [title, description, price, discount_price, category, instructor_name, cover_image_url]
+            'INSERT INTO courses (title, description, price, discount_price, category, instructor_name, cover_image_url, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [title, description, price, discount_price, category, instructor_name, cover_image_url, tags || '']
         );
 
         res.status(201).json({ message: 'Curso criado com sucesso!', courseId: result.insertId });
@@ -64,7 +65,7 @@ exports.createModule = async (req, res) => {
 // 3. Criar Aula (Com Upload de Vídeo e Materiais)
 exports.createLesson = async (req, res) => {
     try {
-        const { moduleId, title, duration, lesson_order, materials_link } = req.body;
+        const { moduleId, title, duration, lesson_order, materials_link, is_free_preview } = req.body;
         const file = req.file;
 
         let video_url = '';
@@ -74,9 +75,10 @@ exports.createLesson = async (req, res) => {
             video_url = uploadResult.secure_url;
         }
 
+        // NOVO: Adicionando 'is_free_preview'
         await db.query(
-            'INSERT INTO lessons (module_id, title, duration, video_url, lesson_order, materials_link) VALUES (?, ?, ?, ?, ?, ?)',
-            [moduleId, title, duration, video_url, lesson_order, materials_link || null]
+            'INSERT INTO lessons (module_id, title, duration, video_url, lesson_order, materials_link, is_free_preview) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [moduleId, title, duration, video_url, lesson_order, materials_link || null, is_free_preview || false]
         );
 
         res.status(201).json({ message: 'Aula criada com sucesso!' });
