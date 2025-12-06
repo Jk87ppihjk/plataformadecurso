@@ -1,52 +1,91 @@
 // jk87ppihjk/plataformadecurso/plataformadecurso-b9c6e7aa4fd932f59defd62dc89fd320bb2ee6e0/pgmt.js
 
+const axios = require('axios');
 const db = require('./database');
-// const axios = require('axios'); // Necessário em integração real, mas mockado aqui.
+require('dotenv').config();
 
-// Configurações mock do AbacatePay
+// Configurações Mock do AbacatePay
 const ABACATEPAY_API_KEY = process.env.ABACATEPAY_API_KEY || 'MOCK_API_KEY';
-const ABACATEPAY_ENDPOINT = 'https://mock.abacatepay.com/v1';
+const API_ENDPOINT = 'https://api.abacatepay.com/v1'; // Endpoint AbacatePay
 
-/**
- * Simula o processamento de pagamento via Cartão de Crédito (Checkout Transparente).
- * @param {object} cardDetails - Dados do cartão (número, nome, cvv, validade).
- * @param {number} amount - Valor da transação.
- * @param {object} personalDetails - Dados do cliente.
- * @returns {object} status: 'APROVED' ou 'DECLINED', transactionId, last4Digits.
- */
-exports.processCreditCardPayment = async (cardDetails, amount, personalDetails) => {
-    // 1. Simulação: Validação de Segurança MOCK
-    // Se o CVV for '000' ou o número do cartão terminar em '1111', simula recusa.
-    if (cardDetails.cvv === '000' || cardDetails.cardNumber.endsWith('1111')) {
-        return { status: 'DECLINED', message: 'Pagamento recusado pela operadora (Simulação de recusa).' };
-    }
+// Função auxiliar para simular a criação de cliente (Necessário para a cobrança)
+exports.createCustomer = async (customerData) => {
+    console.log(`[ABACATEPAY MOCK] Tentando criar cliente: ${customerData.email}`);
     
-    // 2. Retorno Simulado de Sucesso
+    // Simulação de resposta da API
     return {
-        status: 'APROVED',
-        transactionId: `ABCT-${Date.now()}`,
-        last4Digits: cardDetails.cardNumber.slice(-4),
-        message: 'Pagamento via Cartão de Crédito aprovado.',
+        id: `cust-${Math.random().toString(36).substring(2).toUpperCase()}`,
+        status: 'created',
+        message: 'Cliente criado com sucesso (MOCK).'
     };
+
+    /*
+    // Código real: Descomentar em produção
+    const response = await axios.post(`${API_ENDPOINT}/customer/create`, customerData, {
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ABACATEPAY_API_KEY}` },
+    });
+    return response.data;
+    */
 };
 
+
 /**
- * Simula a geração de um pagamento PIX e a criação de um QR Code/Código.
- * @param {number} amount - Valor da transação.
- * @param {object} personalDetails - Dados do cliente.
- * @returns {object} status: 'PENDING', pixCode, qrCodeUrl, expirationTime.
+ * Simula a criação de uma cobrança (Billing) para Cartão ou PIX.
+ * @param {string} courseExternalId - ID do curso (para o produto AbacatePay).
+ * @param {string} courseTitle - Nome do curso.
+ * @param {number} priceInCents - Preço do curso em CENTAVOS.
+ * @param {string} paymentMethod - 'PIX' ou 'CREDIT_CARD'.
+ * @param {object} customerData - Dados do cliente (name, email, taxId, cellphone).
+ * @param {object} cardDetails - Dados do cartão (se aplicável).
+ * @returns {object} Dados da cobrança criada.
  */
-exports.generatePixPayment = async (amount, personalDetails) => {
-    // 1. Simulação: Código e QR Code
-    const pixCode = `ABACATEPAY.PIX.${Math.random().toString(36).substring(2).toUpperCase()}`;
+exports.createBilling = async (courseExternalId, courseTitle, priceInCents, paymentMethod, customerData, cardDetails = null) => {
     
-    // 2. Retorno Simulado
-    return {
-        status: 'PENDING', // O PIX deve sempre iniciar como PENDENTE
-        transactionId: `ABCT-PIX-${Date.now()}`,
-        pixCode: pixCode,
-        qrCodeUrl: `https://via.placeholder.com/200?text=QR+Code+R$${amount}`, // QR Code de exemplo
-        expirationTime: 1800, // 30 minutos
-        message: 'Pagamento PIX gerado. Aguardando confirmação.',
+    // Simulação do payload, seguindo a estrutura da AbacatePay
+    const data = {
+        frequency: 'ONE_TIME',
+        methods: [paymentMethod],
+        products: [
+            {
+                externalId: courseExternalId,
+                name: courseTitle,
+                description: `Matrícula no curso ${courseTitle}.`,
+                quantity: 1,
+                price: priceInCents, // Preço em centavos
+            },
+        ],
+        returnUrl: 'https://plataformadecurso.onrender.com/billing',
+        completionUrl: 'https://plataformadecurso.onrender.com/completion',
+        customer: customerData,
     };
+
+    console.log(`[ABACATEPAY MOCK] Tentando criar cobrança via ${paymentMethod} no valor de R$${(priceInCents / 100).toFixed(2)}`);
+
+    if (paymentMethod === 'PIX') {
+        // Simulação PIX: Retorna PENDING com código para o frontend
+        return {
+            status: 'PENDING',
+            transactionId: `ABCT-PIX-${Date.now()}`,
+            pixCode: `PIX-ABACATEPAY-${Date.now()}`,
+            qrCodeUrl: `https://via.placeholder.com/200?text=QR+Code+R$${(priceInCents / 100).toFixed(2)}`,
+            expirationTime: 1800, // 30 minutos
+            message: 'Cobrança PIX gerada. Aguardando pagamento.',
+        };
+    } 
+    
+    if (paymentMethod === 'CREDIT_CARD') {
+        // Simulação Cartão: Mockando recusa para CVV 000
+        if (cardDetails && cardDetails.cvv === '000') {
+            return { status: 'DECLINED', message: 'Pagamento recusado pela operadora (CVV 000).', transactionId: null };
+        }
+
+        return {
+            status: 'APROVED',
+            transactionId: `ABCT-CC-${Date.now()}`,
+            last4Digits: cardDetails ? cardDetails.cardNumber.slice(-4) : 'MOCK',
+            message: 'Pagamento via Cartão de Crédito aprovado.',
+        };
+    }
+    
+    return { status: 'ERROR', message: 'Método de pagamento não suportado.' };
 };
