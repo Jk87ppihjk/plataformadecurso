@@ -1,10 +1,12 @@
--- Criação do Banco de Dados (Execute isso no seu MySQL Workbench ou phpMyAdmin)
+-- Atualização da Tabela Users (Adicionando role)
+-- Se a tabela já existe, você pode rodar apenas: ALTER TABLE users ADD COLUMN role ENUM('student', 'admin') DEFAULT 'student';
 
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
+    role ENUM('student', 'admin') DEFAULT 'student',
     avatar_url VARCHAR(500),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -14,13 +16,10 @@ CREATE TABLE IF NOT EXISTS courses (
     title VARCHAR(255) NOT NULL,
     description TEXT,
     instructor_name VARCHAR(255),
-    instructor_avatar VARCHAR(500),
     price DECIMAL(10, 2) NOT NULL,
-    discount_price DECIMAL(10, 2), -- Para o "R$ 99,90" vs "R$ 249,90"
-    rating DECIMAL(2, 1) DEFAULT 0.0,
-    students_count INT DEFAULT 0,
-    category VARCHAR(100), -- Ex: 'Design', 'Programação'
-    cover_image_url VARCHAR(500), -- URL do Cloudinary
+    discount_price DECIMAL(10, 2),
+    category VARCHAR(100),
+    cover_image_url VARCHAR(500),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -36,8 +35,8 @@ CREATE TABLE IF NOT EXISTS lessons (
     id INT AUTO_INCREMENT PRIMARY KEY,
     module_id INT,
     title VARCHAR(255) NOT NULL,
-    duration VARCHAR(50), -- Ex: "12:10"
-    video_url VARCHAR(500), -- URL do vídeo no Cloudinary
+    duration VARCHAR(50),
+    video_url VARCHAR(500),
     lesson_order INT,
     FOREIGN KEY (module_id) REFERENCES modules(id) ON DELETE CASCADE
 );
