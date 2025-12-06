@@ -73,23 +73,38 @@ exports.completeLesson = async (req, res) => {
     }
 };
 
-// NOVA FUNÇÃO: Busca o conteúdo do curso aplicando a lógica de liberação (Content Drip)
+// FUNÇÃO ATUALIZADA: Busca o conteúdo do curso aplicando a lógica de liberação (Content Drip)
 exports.getCourseModulesAndLessons = async (req, res) => {
     try {
         const userId = req.user.id;
+        // NOVO: Captura a role do token JWT
+        const userRole = req.user.role; 
         const { courseId } = req.params;
 
-        // 1. Verificar Matrícula e Obter Data de Matrícula
-        const [enrollmentRows] = await db.query('SELECT enrolled_at FROM enrollments WHERE user_id = ? AND course_id = ?', [userId, courseId]);
-        
-        if (enrollmentRows.length === 0) {
-            return res.status(403).json({ message: 'Usuário não matriculado neste curso.' });
-        }
-        
-        const enrollment = enrollmentRows[0];
-        const enrolledDate = new Date(enrollment.enrolled_at);
+        let enrolledDate;
+        let isEnrolled = false;
         const now = new Date();
 
+        // 1. Lógica de Matrícula e Permissão (CORREÇÃO APLICADA AQUI)
+        if (userRole === 'admin') {
+            // Se for admin, pulamos o check de matrícula e assumimos que está "matriculado" agora
+            isEnrolled = true;
+            enrolledDate = now;
+        } else {
+            // Se for aluno (student), verifica a matrícula
+            const [enrollmentRows] = await db.query('SELECT enrolled_at FROM enrollments WHERE user_id = ? AND course_id = ?', [userId, courseId]);
+            
+            if (enrollmentRows.length > 0) {
+                isEnrolled = true;
+                enrolledDate = new Date(enrollmentRows[0].enrolled_at);
+            }
+        }
+
+        // Se o usuário não for admin E não estiver matriculado, nega o acesso
+        if (!isEnrolled) {
+            return res.status(403).json({ message: 'Acesso negado. Usuário não matriculado neste curso.' });
+        }
+        
         // 2. Buscar Módulos
         const [modules] = await db.query(
             'SELECT * FROM modules WHERE course_id = ? ORDER BY module_order', 
@@ -100,16 +115,15 @@ exports.getCourseModulesAndLessons = async (req, res) => {
         for (let mod of modules) {
             const daysToWait = mod.release_days_after_enrollment || 0;
             
-            // Calcula a data de liberação do módulo
             const releaseDate = new Date(enrolledDate);
             releaseDate.setDate(releaseDate.getDate() + daysToWait);
 
-            // Verifica se o módulo está liberado
-            const isReleased = now >= releaseDate;
+            // Admin vê todos os módulos (isReleased = true). Aluno segue o Content Drip.
+            const isReleased = userRole === 'admin' ? true : (now >= releaseDate);
             
             mod.is_released = isReleased;
             
-            if (isReleased) {
+            if (mod.is_released) {
                 // Se liberado, busca as aulas e materiais
                 const [lessons] = await db.query(
                     'SELECT id, title, duration, video_url, materials_link, lesson_order FROM lessons WHERE module_id = ? ORDER BY lesson_order', 
@@ -126,7 +140,6 @@ exports.getCourseModulesAndLessons = async (req, res) => {
             } else {
                 // Se não liberado, envia a data de liberação e esconde o conteúdo
                 mod.lessons = [];
-                // Formata a data para envio ao frontend
                 mod.release_date = releaseDate.toISOString().split('T')[0]; 
             }
         }
