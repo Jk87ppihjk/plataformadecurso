@@ -12,6 +12,7 @@ const authController = require('./authController');
 const courseController = require('./courseController');
 const enrollmentController = require('./enrollmentController');
 const adminController = require('./adminController');
+const reviewController = require('./reviewController'); // NOVO: Importar o novo controller
 
 // Middleware de Autenticação Geral
 const authenticateToken = (req, res, next) => {
@@ -43,6 +44,7 @@ router.post('/register', authController.register);
 router.post('/login', authController.login);
 router.get('/courses', courseController.getAllCourses);
 router.get('/courses/:id', courseController.getCourseDetails);
+router.get('/courses/:courseId/reviews', reviewController.getCourseReviews); // NOVO: Rota para obter avaliações
 
 
 // ------------------------------------
@@ -56,8 +58,14 @@ router.get('/my-courses/:courseId/content', authenticateToken, enrollmentControl
 
 router.post('/lessons/complete', authenticateToken, enrollmentController.completeLesson);
 
-// NOVO: ROTA para processar o checkout e pagamento simulado
+// ROTA para processar o checkout e pagamento simulado
 router.post('/checkout/finish', authenticateToken, enrollmentController.processPaymentAndEnroll); 
+
+// NOVO: Rotas para Avaliações/Comentários/Compartilhamento
+router.post('/reviews/course', authenticateToken, reviewController.submitCourseReview);
+router.get('/lessons/:lessonId/comments', authenticateToken, reviewController.getLessonComments);
+router.post('/comments/lesson', authenticateToken, reviewController.submitLessonComment);
+router.get('/courses/:courseId/share-link', authenticateToken, reviewController.getShareLink); // URL de compartilhamento
 
 
 // ------------------------------------
