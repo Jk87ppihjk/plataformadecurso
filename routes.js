@@ -1,16 +1,22 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+
+// Configuração do Multer (Armazena na memória RAM temporariamente)
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
 // Importar Controllers
 const authController = require('./authController');
 const courseController = require('./courseController');
 const enrollmentController = require('./enrollmentController');
+const adminController = require('./adminController');
 
-// Middleware de Autenticação
+// Middleware de Autenticação Geral
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+    const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) return res.sendStatus(401);
 
@@ -21,15 +27,30 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
+// Middleware Exclusivo para Admin
+const requireAdmin = (req, res, next) => {
+    if (req.user && req.user.role === 'admin') {
+        next();
+    } else {
+        res.status(403).json({ message: 'Acesso negado. Apenas administradores.' });
+    }
+};
+
 // Rotas Públicas
 router.post('/register', authController.register);
 router.post('/login', authController.login);
 router.get('/courses', courseController.getAllCourses);
 router.get('/courses/:id', courseController.getCourseDetails);
 
-// Rotas Privadas (Requerem Login)
+// Rotas de Aluno (Autenticadas)
 router.post('/enroll', authenticateToken, enrollmentController.enroll);
 router.get('/my-courses', authenticateToken, enrollmentController.getMyCourses);
 router.post('/lessons/complete', authenticateToken, enrollmentController.completeLesson);
+
+// Rotas de Admin (Requer Login + Role Admin)
+// upload.single('file') espera um campo no form-data chamado 'file'
+router.post('/admin/courses', authenticateToken, requireAdmin, upload.single('file'), adminController.createCourse);
+router.post('/admin/modules', authenticateToken, requireAdmin, adminController.createModule);
+router.post('/admin/lessons', authenticateToken, requireAdmin, upload.single('file'), adminController.createLesson);
 
 module.exports = router;
