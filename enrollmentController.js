@@ -1,9 +1,9 @@
 const db = require('./database');
 
-// Matricular em um curso
+// Matricular em um curso (Sem alterações)
 exports.enroll = async (req, res) => {
     try {
-        const userId = req.user.id; // Vem do middleware JWT
+        const userId = req.user.id;
         const { courseId } = req.body;
 
         await db.query('INSERT INTO enrollments (user_id, course_id) VALUES (?, ?)', [userId, courseId]);
@@ -14,11 +14,11 @@ exports.enroll = async (req, res) => {
     }
 };
 
-// Listar cursos do usuário com progresso (Tela Meus Cursos)
+// Listar cursos do usuário com progresso (Sem alterações)
 exports.getMyCourses = async (req, res) => {
     try {
         const userId = req.user.id;
-        const { status } = req.query; // 'Em andamento', 'Concluídos', 'Todos'
+        const { status } = req.query;
 
         let query = `
             SELECT c.*, e.last_accessed,
@@ -36,7 +36,6 @@ exports.getMyCourses = async (req, res) => {
 
         const [rows] = await db.query(query, [userId, userId]);
 
-        // Calcular porcentagem
         const courses = rows.map(course => {
             const progress = course.total_lessons > 0 
                 ? Math.round((course.completed_lessons / course.total_lessons) * 100) 
@@ -44,7 +43,6 @@ exports.getMyCourses = async (req, res) => {
             return { ...course, progress };
         });
 
-        // Filtragem no código (ou poderia ser no SQL)
         if (status === 'Em andamento') {
             res.json(courses.filter(c => c.progress < 100));
         } else if (status === 'Concluídos') {
@@ -58,7 +56,7 @@ exports.getMyCourses = async (req, res) => {
     }
 };
 
-// Marcar aula como concluída (Para atualizar a barra de progresso)
+// Marcar aula como concluída (Sem alterações)
 exports.completeLesson = async (req, res) => {
     try {
         const userId = req.user.id;
@@ -72,5 +70,71 @@ exports.completeLesson = async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Erro ao atualizar progresso' });
+    }
+};
+
+// NOVA FUNÇÃO: Busca o conteúdo do curso aplicando a lógica de liberação (Content Drip)
+exports.getCourseModulesAndLessons = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { courseId } = req.params;
+
+        // 1. Verificar Matrícula e Obter Data de Matrícula
+        const [enrollmentRows] = await db.query('SELECT enrolled_at FROM enrollments WHERE user_id = ? AND course_id = ?', [userId, courseId]);
+        
+        if (enrollmentRows.length === 0) {
+            return res.status(403).json({ message: 'Usuário não matriculado neste curso.' });
+        }
+        
+        const enrollment = enrollmentRows[0];
+        const enrolledDate = new Date(enrollment.enrolled_at);
+        const now = new Date();
+
+        // 2. Buscar Módulos
+        const [modules] = await db.query(
+            'SELECT * FROM modules WHERE course_id = ? ORDER BY module_order', 
+            [courseId]
+        );
+        
+        // 3. Aplicar Lógica de Liberação
+        for (let mod of modules) {
+            const daysToWait = mod.release_days_after_enrollment || 0;
+            
+            // Calcula a data de liberação do módulo
+            const releaseDate = new Date(enrolledDate);
+            releaseDate.setDate(releaseDate.getDate() + daysToWait);
+
+            // Verifica se o módulo está liberado
+            const isReleased = now >= releaseDate;
+            
+            mod.is_released = isReleased;
+            
+            if (isReleased) {
+                // Se liberado, busca as aulas e materiais
+                const [lessons] = await db.query(
+                    'SELECT id, title, duration, video_url, materials_link, lesson_order FROM lessons WHERE module_id = ? ORDER BY lesson_order', 
+                    [mod.id]
+                );
+                
+                // Buscar progresso do aluno para cada aula
+                for (let lesson of lessons) {
+                    const [progress] = await db.query('SELECT completed FROM progress WHERE user_id = ? AND lesson_id = ?', [userId, lesson.id]);
+                    lesson.completed = progress.length > 0 ? progress[0].completed : false;
+                }
+                
+                mod.lessons = lessons;
+            } else {
+                // Se não liberado, envia a data de liberação e esconde o conteúdo
+                mod.lessons = [];
+                // Formata a data para envio ao frontend
+                mod.release_date = releaseDate.toISOString().split('T')[0]; 
+            }
+        }
+
+        res.json(modules);
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Erro ao buscar conteúdo do curso' });
     }
 };
